@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Outrun Running Timer</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; }
+        canvas { display: block; }
+        #ui-container {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            right: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        #timer-container {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+        #timer {
+            color: white;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 48px;
+            text-shadow: 2px 2px 4px #000000;
+        }
+        .control-button {
+            font-size: 1em;
+            padding: 10px 20px;
+            font-family: 'Courier New', Courier, monospace;
+            background-color: #1a1a1a;
+            color: #fff;
+            border: 2px solid #fff;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: background-color 0.3s, transform 0.1s;
+        }
+        .control-button:hover {
+            background-color: #333;
+        }
+        .control-button:active {
+            transform: scale(0.98);
+        }
+        .control-button:disabled {
+            background-color: #555;
+            color: #888;
+            border-color: #888;
+            cursor: not-allowed;
+        }
+        #pace-selector {
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 16px;
+            background-color: #333;
+            color: white;
+            border: 1px solid #555;
+            padding: 8px;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div id="ui-container">
+        <div id="timer-container">
+            <button id="start-button" class="control-button">Start</button>
+            <button id="pause-button" class="control-button" disabled>Pause</button>
+            <button id="reset-button" class="control-button" disabled>Reset</button>
+            <div id="timer">00:00:00</div>
+        </div>
+        <select id="pace-selector"></select>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    
+    <!-- Sky Shaders -->
+    <script id="skyVertexShader" type="x-shader/x-vertex">
+        varying vec3 vWorldPosition;
+        void main() {
+            vec4 worldPosition = modelMatrix * vec4( position, 1.0 );
+            vWorldPosition = worldPosition.xyz;
+            gl_Position = projectionMatrix * viewMatrix * worldPosition;
+        }
+    </script>
+    <script id="skyFragmentShader" type="x-shader/x-fragment">
+        // "Volumetric clouds" shader by valentingalea
+        uniform vec2 iResolution;
+        uniform float iTime;
+        varying vec3 vWorldPosition;
+
+        const float cloudscale = 1.1; const float speed = 0.03; const float clouddark = 0.5;
+        const float cloudlight = 0.3; const float cloudcover = 0.2; const float cloudalpha = 8.0;
+        const vec3 skycolour1 = vec3(0.2, 0.4, 0.6); const vec3 skycolour2 = vec3(0.4, 0.7, 1.0);
+        mat2 m = mat2(1.6, 1.2, -1.2, 1.6);
+
+        vec2 hash(vec2 p) {
+            p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
+            return -1.0 + 2.0 * fract(sin(p) * 43758.5453123);
+        }
+        float noise(vec2 p) {
+            const float K1 = 0.366025404; const float K2 = 0.211324865;
+            vec2 i = floor(p + (p.x + p.y) * K1);
+            vec2 a = p - i + (i.x + i.y) * K2;
+            vec2 o = (a.x > a.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
+            vec2 b = a - o + K2; vec2 c = a - 1.0 + 2.0 * K2;
+            vec3 h = max(0.5 - vec3(dot(a, a), dot(b, b), dot(c, c)), 0.0);
+            vec3 n = h * h * h * h * vec3(dot(a, hash(i + 0.0)), dot(b, hash(i + o)), dot(c, hash(i + 1.0)));
+            return dot(n, vec3(70.0));
+        }
+        float fbm(vec2 n) {
+            float total = 0.0, amplitude = 0.1;
+            for (int i = 0; i < 7; i++) {
+                total += noise(n) * amplitude;
+                n = m * n;
+                amplitude *= 0.4;
+            }
+            return total;
+        }
+
+        void main() {
+            vec2 p = gl_FragCoord.xy / iResolution.xy;
+            vec2 uv = p * vec2(iResolution.x / iResolution.y, 1.0);
+            float time = iTime * speed * 0.1;
+            float q = fbm(uv * cloudscale * 0.5);
+            float r = 0.0;
+            uv *= cloudscale; uv -= q;
+            float weight = 0.8;
+            for (int i = 0; i < 8; i++) {
+                r += abs(weight * noise(uv));
+                uv = m * uv;
+                weight *= 0.7;
+            }
+            float f = 0.0;
+            uv = p * vec2(iResolution.x / iResolution.y, 1.0);
+            uv *= cloudscale; uv -= q;
+            weight = 0.7;
+            for (int i = 0; i < 8; i++) {
+                f += weight * noise(uv);
+                uv = m * uv;
+                weight *= 0.6;
+            }
+            f *= cloudcover; f = max(f, 0.0);
+            float c = 0.0;
+            time = iTime * speed * 2.0;
+            uv = p * vec2(iResolution.x / iResolution.y, 1.0);
+            uv *= cloudscale * 2.0; uv -= q; weight = 0.4;
+            for (int i = 0; i < 7; i++) {
+                c += weight * noise(uv);
+                uv = m * uv;
+                weight *= 0.6;
+            }
+            float c2 = 0.0;
+            time = iTime * speed * 3.0;
+            uv = p * vec2(iResolution.x / iResolution.y, 1.0);
+            uv *= cloudscale * 3.0; uv -= q; weight = 0.4;
+            for (int i = 0; i < 7; i++) {
+                c2 += weight * noise(uv);
+                uv = m * uv;
+                weight *= 0.6;
+            }
+            c += c2;
+            vec3 skycolour = mix(skycolour2, skycolour1, p.y);
+            vec3 cloudcolour = vec3(1.1, 1.1, 1.1) * clamp((clouddark + cloudlight * c), 0.0, 1.0);
+            f = cloudalpha * f * p.y;
+            vec3 finalcolour = mix(skycolour, clamp(cloudcolour, 0.0, 1.0), clamp(f, 0.0, 1.0));
+            gl_FragColor = vec4(finalcolour, 1.0);
+        }
+    </script>
+    
+    <!-- Grass Shaders -->
+    <script id="grassVertexShader" type="x-shader/x-vertex">
+        varying vec2 vUv;
+        void main() {
+            vUv = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+    </script>
+    <script id="grassFragmentShader" type="x-shader/x-fragment">
+        varying vec2 vUv;
+        uniform float iTime;
+
+        float random (in vec2 st) { return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453123); }
+        float noise (in vec2 st) {
+            vec2 i = floor(st);
+            vec2 f = fract(st);
+            float a = random(i);
+            float b = random(i + vec2(1.0, 0.0));
+            float c = random(i + vec2(0.0, 1.0));
+            float d = random(i + vec2(1.0, 1.0));
+            vec2 u = f*f*(3.0-2.0*f);
+            return mix(a, b, u.x) + (c - a)* u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
+        }
+        mat2 m = mat2( 0.80,  0.60, -0.60,  0.80 );
+        float fbm (in vec2 st) {
+            float value = 0.0;
+            float amplitude = .5;
+            for (int i = 0; i < 6; i++) {
+                value += amplitude * noise(st);
+                st = m * st;
+                amplitude *= .5;
+            }
+            return value;
+        }
+
+        void main() {
+            vec2 uv = vUv;
+            uv.y = pow(uv.y, 0.5); 
+            uv *= 15.0; 
+            vec2 motion = vec2(iTime * 0.02, iTime * 0.01);
+            float n = fbm(uv + motion);
+            vec3 color1 = vec3(0.1, 0.4, 0.1); 
+            vec3 color2 = vec3(0.25, 0.6, 0.2); 
+            vec3 final_color = mix(color1, color2, n);
+            gl_FragColor = vec4(final_color, 1.0);
+        }
+    </script>
+
+    <script>
+        // --- Global State ---
+        let scene, camera, renderer, skyShaderMaterial, grassShaderMaterial, baseLines;
+        let runStartTime, MILE_INTERVAL_MS, timeOffset = 0, pauseStartTime;
+        let animationFrameId;
+        let isRunning = false;
+        let clock = new THREE.Clock();
+        
+        let signs = [], buildings = [], people = [], finishLines = [], startingLines = [];
+        const farZ = -300;
+        
+        let miles = 0, halfMiles = 0, kilometers = 0;
+        const MILE_TO_KM = 1.60934;
+        const KM_5_IN_MILES = 3.10686;
+        const KM_10_IN_MILES = 6.21371;
+        let spawned5k = false, spawned10k = false;
+
+        const baseCameraY = 1.5;
+        let lineSpeed = 0.1;
+
+        const timerElement = document.getElementById('timer');
+        const paceSelector = document.getElementById('pace-selector');
+        const startButton = document.getElementById('start-button');
+        const pauseButton = document.getElementById('pause-button');
+        const resetButton = document.getElementById('reset-button');
+
+        // --- Initialization ---
+        function init() {
+            initScene();
+            initShaders();
+            baseLines = createBaseScenery();
+            populatePaceSelector();
+            initEventListeners();
+            populateInitialScenery(); 
+            animate(); 
+        }
+
+        function initScene() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000);
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+            scene.add(ambientLight);
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.6);
+            directionalLight.position.set(0, 5, 2); 
+            scene.add(directionalLight);
+            camera.position.set(0, baseCameraY, 5);
+        }
+        
+        function initShaders() {
+            skyShaderMaterial = new THREE.ShaderMaterial({
+                uniforms: { iTime: { value: 0 }, iResolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) } },
+                vertexShader: document.getElementById('skyVertexShader').textContent,
+                fragmentShader: document.getElementById('skyFragmentShader').textContent,
+                side: THREE.BackSide
+            });
+            const skyboxGeometry = new THREE.BoxGeometry(1500, 1500, 1500);
+            const skybox = new THREE.Mesh(skyboxGeometry, skyShaderMaterial);
+            scene.add(skybox);
+
+            grassShaderMaterial = new THREE.ShaderMaterial({
+                uniforms: { iTime: { value: 0 } },
+                vertexShader: document.getElementById('grassVertexShader').textContent,
+                fragmentShader: document.getElementById('grassFragmentShader').textContent,
+            });
+        }
+        
+        function populatePaceSelector() {
+            for (let min = 4; min <= 30; min++) {
+                for (let sec = 0; sec < 60; sec += 30) {
+                    if (min === 30 && sec > 0) continue;
+                    const timeString = `${min.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
+                    const option = document.createElement('option');
+                    option.value = min * 60 + sec;
+                    option.textContent = `${timeString} / mile`;
+                    paceSelector.appendChild(option);
+                }
+            }
+            paceSelector.value = '480';
+            updateSpeedFromPace();
+        }
+
+        function createBaseScenery() {
+            const groundGeometry = new THREE.PlaneGeometry(2000, 2000);
+            const ground = new THREE.Mesh(groundGeometry, grassShaderMaterial);
+            ground.rotation.x = -Math.PI / 2;
+            ground.position.y = -0.5;
+            scene.add(ground);
+
+            const roadGeometry = new THREE.PlaneGeometry(8, 2000);
+            const roadMaterial = new THREE.MeshStandardMaterial({ color: 0x080808, roughness: 0.7 });
+            const road = new THREE.Mesh(roadGeometry, roadMaterial);
+            road.rotation.x = -Math.PI / 2;
+            road.position.y = -0.49;
+            scene.add(road);
+
+            const lines = [];
+            const lineCount = 50;
+            for (let i = 0; i < lineCount; i++) {
+                const geometry = new THREE.PlaneGeometry(0.2, 3);
+                const material = new THREE.MeshBasicMaterial({ color: 0xffffff });
+                const line = new THREE.Mesh(geometry, material);
+                line.isRoadLine = true;
+                line.rotation.x = -Math.PI / 2;
+                line.position.y = -0.48;
+                line.position.z = (i * 10) - (lineCount * 5);
+                scene.add(line);
+                lines.push(line);
+            }
+            return lines;
+        }
+
+        function createRoadSign(text, side) {
+            const signGroup = new THREE.Group();
+            const postGeometry = new THREE.BoxGeometry(0.1, 2, 0.1);
+            const postMaterial = new THREE.MeshStandardMaterial({ color: 0x8B4513, roughness: 0.9 });
+            const post = new THREE.Mesh(postGeometry, postMaterial);
+            post.position.z = -0.1;
+
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            canvas.width = 256; canvas.height = 128;
+            context.fillStyle = '#FFFFFF';
+            context.fillRect(0, 0, canvas.width, canvas.height);
+            context.font = 'bold 40px Arial';
+            context.fillStyle = '#000000';
+            context.textAlign = 'center'; context.textBaseline = 'middle';
+            context.fillText(text, canvas.width / 2, canvas.height / 2);
+            
+            const texture = new THREE.CanvasTexture(canvas);
+            const signGeometry = new THREE.PlaneGeometry(2, 1);
+            const signMaterial = new THREE.MeshBasicMaterial({ map: texture });
+            const signboard = new THREE.Mesh(signGeometry, signMaterial);
+            signboard.position.y = 1;
+
+            signGroup.add(post, signboard);
+            const xPos = side === 'left' ? -5.5 : 5.5;
+            signGroup.position.set(xPos, 0.5, farZ);
+            scene.add(signGroup);
+            signs.push(signGroup);
+        }
+
+        function createFinishLine(label, color = '#FF0000') {
+            const finishGroup = new THREE.Group();
+            const postMaterial = new THREE.MeshStandardMaterial({ color: 0x444444 });
+            const postGeo = new THREE.CylinderGeometry(0.2, 0.2, 4, 8);
+            const post1 = new THREE.Mesh(postGeo, postMaterial);
+            post1.position.set(-5, 1.5, 0);
+            const post2 = new THREE.Mesh(postGeo, postMaterial);
+            post2.position.set(5, 1.5, 0);
+            const archGeo = new THREE.TorusGeometry(5, 0.2, 8, 24, Math.PI);
+            const arch = new THREE.Mesh(archGeo, postMaterial);
+            arch.position.y = 1.5;
+            arch.rotation.x = Math.PI;
+            const canvas = document.createElement('canvas');
+            canvas.width = 512; canvas.height = 64;
+            const context = canvas.getContext('2d');
+            context.fillStyle = color;
+            context.fillRect(0, 0, canvas.width, canvas.height);
+            context.font = 'bold 48px Arial';
+            context.fillStyle = '#FFFFFF';
+            context.textAlign = 'center'; context.textBaseline = 'middle';
+            context.fillText(label, canvas.width / 2, canvas.height / 2);
+            const texture = new THREE.CanvasTexture(canvas);
+            const ribbonGeo = new THREE.PlaneGeometry(10, 1);
+            const ribbonMat = new THREE.MeshBasicMaterial({ map: texture });
+            const ribbon = new THREE.Mesh(ribbonGeo, ribbonMat);
+            ribbon.position.y = 3.2;
+            finishGroup.add(post1, post2, arch, ribbon);
+            return finishGroup;
+        }
+        
+        function createBuildingTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 128; canvas.height = 512;
+            const context = canvas.getContext('2d');
+            const wallColor = `rgb(${Math.floor(Math.random()*50)+50}, ${Math.floor(Math.random()*50)+50}, ${Math.floor(Math.random()*50)+50})`;
+            context.fillStyle = wallColor;
+            context.fillRect(0, 0, canvas.width, canvas.height);
+            for(let y = 10; y < canvas.height - 10; y += 30) {
+                for (let x = 10; x < canvas.width - 10; x += 30) {
+                    const lightOn = Math.random() > 0.7;
+                    context.fillStyle = lightOn ? `rgb(255, 223, 100)` : `rgb(20, 20, 40)`;
+                    context.fillRect(x, y, 20, 20);
+                }
+            }
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.wrapS = THREE.RepeatWrapping;
+            texture.wrapT = THREE.RepeatWrapping;
+            texture.repeat.set(1, 1);
+            return texture;
+        }
+
+        function createBuilding() {
+            const height = Math.random() * 40 + 10;
+            const width = Math.random() * 10 + 8;
+            const depth = Math.random() * 10 + 8;
+            const buildingGeometry = new THREE.BoxGeometry(width, height, depth);
+            const buildingMaterial = new THREE.MeshStandardMaterial({ map: createBuildingTexture(), roughness: 0.8 });
+            const building = new THREE.Mesh(buildingGeometry, buildingMaterial);
+            return building;
+        }
+        
+        function createCheeringPerson() {
+            const personGroup = new THREE.Group();
+            const bodyMaterial = new THREE.MeshStandardMaterial({ color: new THREE.Color(Math.random(), Math.random(), Math.random()), roughness: 0.7 });
+            const headMaterial = new THREE.MeshStandardMaterial({ color: 0xffdbac, roughness: 0.6 });
+            const head = new THREE.Mesh(new THREE.SphereGeometry(0.25, 16, 16), headMaterial);
+            head.position.y = 1.0;
+            const body = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.8, 0.3), bodyMaterial);
+            body.position.y = 0.4;
+            
+            const armGeom = new THREE.BoxGeometry(0.15, 0.6, 0.15);
+            armGeom.translate(0, 0.3, 0); // Set pivot to shoulder
+            
+            const leftArm = new THREE.Mesh(armGeom, bodyMaterial);
+            leftArm.position.set(-0.25, 0.7, 0);
+            leftArm.isLeftArm = true;
+            leftArm.rotation.z = Math.PI / 4; // V-shape up
+            
+            const rightArm = new THREE.Mesh(armGeom, bodyMaterial);
+            rightArm.position.set(0.25, 0.7, 0);
+            rightArm.isRightArm = true;
+            rightArm.rotation.z = -Math.PI / 4; // V-shape up
+
+            personGroup.add(head, body, leftArm, rightArm);
+            personGroup.animationOffset = Math.random() * Math.PI * 2;
+            return personGroup;
+        }
+        
+        function populateInitialScenery() {
+            clearDynamicScenery();
+            const startLine = createFinishLine("START", "#00A000");
+            startLine.position.set(0, 0, -10);
+            scene.add(startLine);
+            startingLines.push(startLine);
+
+            for (let i = 0; i < 40; i++) {
+                const distance = -20 - (i * 12);
+                addBuilding(distance, true);
+                addBuilding(distance, false);
+            }
+            for (let i = 0; i < 80; i++) {
+                 const distance = -15 - (i * 6);
+                 addPerson(distance, true);
+                 addPerson(distance, false);
+            }
+        }
+
+        function addBuilding(distance, onLeft) {
+            const building = createBuilding();
+            const side = onLeft ? -1 : 1;
+            building.position.set(side * (15 + Math.random() * 10), building.geometry.parameters.height / 2 - 0.5, distance);
+            scene.add(building);
+            buildings.push(building);
+        }
+
+        function addPerson(distance, onLeft) {
+            const person = createCheeringPerson();
+            const side = onLeft ? -1 : 1;
+            person.position.set(side * (6 + Math.random()), 0, distance);
+            person.rotation.y = onLeft ? Math.PI / 2 : -Math.PI / 2;
+            scene.add(person);
+            people.push(person);
+        }
+        
+        function clearDynamicScenery() {
+            [...signs, ...buildings, ...people, ...finishLines, ...startingLines].forEach(obj => {
+                if(obj.parent) scene.remove(obj);
+            });
+            signs = []; buildings = []; people = []; finishLines = []; startingLines = [];
+        }
+
+        function startRun() {
+            if (isRunning) return;
+            isRunning = true;
+            updateSpeedFromPace();
+            miles = 0; halfMiles = 0; kilometers = 0;
+            spawned5k = false; spawned10k = false;
+            runStartTime = clock.getElapsedTime();
+            timeOffset = 0;
+            
+            startButton.disabled = true;
+            pauseButton.disabled = false;
+            resetButton.disabled = false;
+        }
+
+        function togglePause() {
+            if (!startButton.disabled) return;
+            isRunning = !isRunning;
+            if(isRunning) {
+                timeOffset += clock.getElapsedTime() - pauseStartTime;
+                pauseButton.textContent = "Pause";
+            } else {
+                pauseStartTime = clock.getElapsedTime();
+                pauseButton.textContent = "Resume";
+            }
+        }
+
+        function resetRun() {
+            isRunning = false;
+            timeOffset = 0;
+            timerElement.textContent = "00:00:00";
+            camera.position.y = baseCameraY;
+            populateInitialScenery();
+            startButton.disabled = false;
+            pauseButton.disabled = true;
+            pauseButton.textContent = "Pause";
+            resetButton.disabled = true;
+        }
+        
+        function updateSpeedFromPace() {
+            const paceSeconds = parseInt(paceSelector.value);
+            MILE_INTERVAL_MS = paceSeconds * 1000;
+            const minPace = 240; const maxPace = 1800; 
+            const minSpeed = 0.03; const maxSpeed = 0.15; 
+            const paceRatio = (paceSeconds - minPace) / (maxPace - minPace);
+            lineSpeed = maxSpeed - (paceRatio * (maxSpeed - minSpeed));
+        }
+
+        function animate() {
+            animationFrameId = requestAnimationFrame(animate);
+            const time = clock.getElapsedTime();
+            
+            skyShaderMaterial.uniforms.iTime.value = time;
+            grassShaderMaterial.uniforms.iTime.value = time;
+            
+            if (isRunning) {
+                const elapsedTime = time - runStartTime - timeOffset;
+                
+                const headBounce = Math.sin(elapsedTime * 8) * 0.05;
+                camera.position.y = baseCameraY + headBounce;
+
+                const totalSeconds = Math.floor(elapsedTime);
+                timerElement.textContent = `${Math.floor(totalSeconds / 3600).toString().padStart(2, '0')}:${Math.floor((totalSeconds % 3600) / 60).toString().padStart(2, '0')}:${(totalSeconds % 60).toString().padStart(2, '0')}`;
+                
+                const allScenery = [...signs, ...buildings, ...people, ...finishLines, ...startingLines];
+                allScenery.forEach(obj => obj.position.z += lineSpeed);
+                baseLines.forEach(line => {
+                    line.position.z += lineSpeed;
+                    if(line.position.z > camera.position.z + 5) {
+                        line.position.z -= baseLines.length * 10;
+                    }
+                });
+                
+                people.forEach(person => {
+                    const animTime = time * 5 + person.animationOffset;
+                    person.children.forEach(child => {
+                        if (child.isLeftArm) {
+                            child.rotation.z = (Math.PI / 4) + (Math.sin(animTime) * (Math.PI / 12));
+                        }
+                        if (child.isRightArm) {
+                           child.rotation.z = -(Math.PI / 4) - (Math.sin(animTime) * (Math.PI / 12));
+                        }
+                    });
+                });
+                
+                buildings.forEach((obj, index) => {
+                    if (obj.position.z > camera.position.z + 10) {
+                        const side = obj.position.x < 0;
+                        obj.position.z = farZ - (25 + Math.random() * 15);
+                    }
+                });
+                people.forEach((obj, index) => {
+                    if (obj.position.z > camera.position.z + 10) {
+                       obj.position.z = farZ - (3 + Math.random() * 4);
+                    }
+                });
+                [...signs, ...finishLines, ...startingLines].forEach((obj) => {
+                    if (obj.position.z > camera.position.z + 10) {
+                        if(obj.parent) scene.remove(obj);
+                    }
+                });
+                
+                const totalMilesElapsed = elapsedTime / (MILE_INTERVAL_MS / 1000);
+                const totalKmElapsed = totalMilesElapsed * MILE_TO_KM;
+                
+                if (miles < Math.floor(totalMilesElapsed)) {
+                    miles = Math.floor(totalMilesElapsed);
+                    if (miles > 0) createRoadSign(`MILE ${miles}`, 'right');
+                }
+                if (halfMiles < Math.floor(totalMilesElapsed * 2)) {
+                    halfMiles = Math.floor(totalMilesElapsed * 2);
+                    if(halfMiles > 0 && halfMiles % 2 !== 0) createRoadSign(`${halfMiles / 2} MILES`, 'right');
+                }
+                 if (kilometers < Math.floor(totalKmElapsed)) {
+                    kilometers = Math.floor(totalKmElapsed);
+                    if (kilometers > 0) createRoadSign(`KM ${kilometers}`, 'left');
+                }
+
+                if (totalMilesElapsed >= KM_5_IN_MILES && !spawned5k) {
+                    const line = createFinishLine('5K FINISH');
+                    line.position.set(0,0,farZ);
+                    scene.add(line);
+                    finishLines.push(line);
+                    spawned5k = true;
+                }
+                if (totalMilesElapsed >= KM_10_IN_MILES && !spawned10k) {
+                    const line = createFinishLine('10K FINISH');
+                    line.position.set(0,0,farZ);
+                    scene.add(line);
+                    finishLines.push(line);
+                    spawned10k = true;
+                }
+            }
+            renderer.render(scene, camera);
+        }
+
+        function initEventListeners() {
+            window.addEventListener('resize', () => {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                skyShaderMaterial.uniforms.iResolution.value.set(window.innerWidth, window.innerHeight);
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            }, false);
+            
+            startButton.addEventListener('click', startRun);
+            pauseButton.addEventListener('click', togglePause);
+            resetButton.addEventListener('click', resetRun);
+            paceSelector.addEventListener('change', updateSpeedFromPace);
+        }
+
+        window.onload = init;
+    </script>
+</body>
+</html>
