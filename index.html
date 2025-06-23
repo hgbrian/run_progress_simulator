@@ -231,7 +231,7 @@
         let clock = new THREE.Clock();
         
         let signs = [], buildings = [], people = [], finishLines = [], startingLines = [];
-        const sceneryViewDistance = 300;
+        const sceneryViewDistance = 350; // How far the scenery extends
         
         // --- Milestone State ---
         let totalDistanceMiles = 0;
@@ -242,22 +242,18 @@
         let spawned5k = false, spawned10k = false;
 
         const baseCameraY = 1.5;
-        let speedMph = 7.5; // Default speed in mph
+        let speedMph = 7.5; 
+        let PACE_S_PER_MILE;
 
-        const timerElement = document.getElementById('timer');
-        const speedSelector = document.getElementById('speed-selector');
-        const paceDisplay = document.getElementById('pace-display');
-        const startButton = document.getElementById('start-button');
-        const pauseButton = document.getElementById('pause-button');
-        const resetButton = document.getElementById('reset-button');
+        // --- UI Element variables ---
+        let timerElement, speedSelector, paceDisplay, startButton, pauseButton, resetButton;
 
         // --- Initialization ---
         function init() {
             initScene();
             initShaders();
             baseLines = createBaseScenery();
-            populateSpeedSelector();
-            initEventListeners();
+            initUI();
             populateInitialScenery(); 
             animate(); 
         }
@@ -294,6 +290,18 @@
             });
         }
         
+        function initUI() {
+            timerElement = document.getElementById('timer');
+            speedSelector = document.getElementById('speed-selector');
+            paceDisplay = document.getElementById('pace-display');
+            startButton = document.getElementById('start-button');
+            pauseButton = document.getElementById('pause-button');
+            resetButton = document.getElementById('reset-button');
+            
+            populateSpeedSelector();
+            initEventListeners();
+        }
+
         function populateSpeedSelector() {
             for (let s = 1.0; s <= 12.0; s += 0.1) {
                 const speedVal = s.toFixed(1);
@@ -302,7 +310,7 @@
                 option.textContent = speedVal;
                 speedSelector.appendChild(option);
             }
-            speedSelector.value = '7.5'; // Default to 7.5 mph (8:00/mile)
+            speedSelector.value = '7.5'; 
             updatePaceFromSpeed();
         }
 
@@ -459,13 +467,13 @@
             scene.add(startLine);
             startingLines.push(startLine);
 
-            for (let i = 0; i < 40; i++) {
-                const distance = -20 - (i * 12);
+            for (let i = 0; i < 60; i++) {
+                const distance = -20 - (i * 8);
                 addBuilding(distance, true);
                 addBuilding(distance, false);
             }
-            for (let i = 0; i < 80; i++) {
-                 const distance = -15 - (i * 6);
+            for (let i = 0; i < 240; i++) {
+                 const distance = -15 - (i * 2);
                  addPerson(distance, true);
                  addPerson(distance, false);
             }
@@ -598,12 +606,14 @@
                 
                 buildings.forEach((obj) => {
                     if (obj.position.z > camera.position.z + 10) {
-                        obj.position.z = scenerySpawnZ - (25 + Math.random() * 15);
+                        const lastBuildingZ = Math.min(...buildings.map(b => b.position.z));
+                        obj.position.z = lastBuildingZ - 8;
                     }
                 });
                 people.forEach((obj) => {
                     if (obj.position.z > camera.position.z + 10) {
-                       obj.position.z = scenerySpawnZ - (3 + Math.random() * 4);
+                       const lastPersonZ = Math.min(...people.map(p => p.position.z));
+                       obj.position.z = lastPersonZ - 2;
                     }
                 });
                 [...signs, ...finishLines, ...startingLines].forEach((obj) => {
