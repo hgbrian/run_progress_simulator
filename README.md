@@ -1,2 +1,6 @@
 # run_progress_simulator
-vibe coded run progress simulator for treadmill
+Run progress simulator for treadmill vibe coded with Gemini Pro Canvas.
+
+https://hgbrian.github.io/run_progress_simulator/
+
+![Uploading image.png…]()
