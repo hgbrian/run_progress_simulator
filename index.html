@@ -13,6 +13,8 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
+            font-family: 'Courier New', Courier, monospace;
+            color: white;
         }
         #timer-container {
             display: flex;
@@ -20,8 +22,6 @@
             gap: 20px;
         }
         #timer {
-            color: white;
-            font-family: 'Courier New', Courier, monospace;
             font-size: 48px;
             text-shadow: 2px 2px 4px #000000;
         }
@@ -48,8 +48,12 @@
             border-color: #888;
             cursor: not-allowed;
         }
-        #pace-selector {
-            font-family: 'Courier New', Courier, monospace;
+        #speed-controls {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        #speed-selector, #pace-display {
             font-size: 16px;
             background-color: #333;
             color: white;
@@ -67,7 +71,11 @@
             <button id="reset-button" class="control-button" disabled>Reset</button>
             <div id="timer">00:00:00</div>
         </div>
-        <select id="pace-selector"></select>
+        <div id="speed-controls">
+             <label for="speed-selector">Speed (mph):</label>
+            <select id="speed-selector"></select>
+            <div id="pace-display">Pace: 00:00/mile</div>
+        </div>
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -217,25 +225,28 @@
     <script>
         // --- Global State ---
         let scene, camera, renderer, skyShaderMaterial, grassShaderMaterial, baseLines;
-        let runStartTime, MILE_INTERVAL_MS, timeOffset = 0, pauseStartTime;
+        let runStartTime, timeOffset = 0, pauseStartTime;
         let animationFrameId;
         let isRunning = false;
         let clock = new THREE.Clock();
         
         let signs = [], buildings = [], people = [], finishLines = [], startingLines = [];
-        const farZ = -300;
+        const sceneryViewDistance = 300;
         
-        let miles = 0, halfMiles = 0, kilometers = 0;
+        // --- Milestone State ---
+        let totalDistanceMiles = 0;
+        let nextMile, nextHalfMile, nextKm, nextHalfKm;
         const MILE_TO_KM = 1.60934;
         const KM_5_IN_MILES = 3.10686;
         const KM_10_IN_MILES = 6.21371;
         let spawned5k = false, spawned10k = false;
 
         const baseCameraY = 1.5;
-        let lineSpeed = 0.1;
+        let speedMph = 7.5; // Default speed in mph
 
         const timerElement = document.getElementById('timer');
-        const paceSelector = document.getElementById('pace-selector');
+        const speedSelector = document.getElementById('speed-selector');
+        const paceDisplay = document.getElementById('pace-display');
         const startButton = document.getElementById('start-button');
         const pauseButton = document.getElementById('pause-button');
         const resetButton = document.getElementById('reset-button');
@@ -245,7 +256,7 @@
             initScene();
             initShaders();
             baseLines = createBaseScenery();
-            populatePaceSelector();
+            populateSpeedSelector();
             initEventListeners();
             populateInitialScenery(); 
             animate(); 
@@ -283,19 +294,16 @@
             });
         }
         
-        function populatePaceSelector() {
-            for (let min = 4; min <= 30; min++) {
-                for (let sec = 0; sec < 60; sec += 30) {
-                    if (min === 30 && sec > 0) continue;
-                    const timeString = `${min.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
-                    const option = document.createElement('option');
-                    option.value = min * 60 + sec;
-                    option.textContent = `${timeString} / mile`;
-                    paceSelector.appendChild(option);
-                }
+        function populateSpeedSelector() {
+            for (let s = 1.0; s <= 12.0; s += 0.1) {
+                const speedVal = s.toFixed(1);
+                const option = document.createElement('option');
+                option.value = speedVal;
+                option.textContent = speedVal;
+                speedSelector.appendChild(option);
             }
-            paceSelector.value = '480';
-            updateSpeedFromPace();
+            speedSelector.value = '7.5'; // Default to 7.5 mph (8:00/mile)
+            updatePaceFromSpeed();
         }
 
         function createBaseScenery() {
@@ -353,7 +361,7 @@
 
             signGroup.add(post, signboard);
             const xPos = side === 'left' ? -5.5 : 5.5;
-            signGroup.position.set(xPos, 0.5, farZ);
+            signGroup.position.set(xPos, 0.5, -20);
             scene.add(signGroup);
             signs.push(signGroup);
         }
@@ -429,17 +437,15 @@
             body.position.y = 0.4;
             
             const armGeom = new THREE.BoxGeometry(0.15, 0.6, 0.15);
-            armGeom.translate(0, 0.3, 0); // Set pivot to shoulder
+            armGeom.translate(0, 0.3, 0); 
             
             const leftArm = new THREE.Mesh(armGeom, bodyMaterial);
             leftArm.position.set(-0.25, 0.7, 0);
             leftArm.isLeftArm = true;
-            leftArm.rotation.z = Math.PI / 4; // V-shape up
             
             const rightArm = new THREE.Mesh(armGeom, bodyMaterial);
             rightArm.position.set(0.25, 0.7, 0);
             rightArm.isRightArm = true;
-            rightArm.rotation.z = -Math.PI / 4; // V-shape up
 
             personGroup.add(head, body, leftArm, rightArm);
             personGroup.animationOffset = Math.random() * Math.PI * 2;
@@ -449,7 +455,7 @@
         function populateInitialScenery() {
             clearDynamicScenery();
             const startLine = createFinishLine("START", "#00A000");
-            startLine.position.set(0, 0, -10);
+            startLine.position.set(0, 0, -2);
             scene.add(startLine);
             startingLines.push(startLine);
 
@@ -492,9 +498,15 @@
         function startRun() {
             if (isRunning) return;
             isRunning = true;
-            updateSpeedFromPace();
-            miles = 0; halfMiles = 0; kilometers = 0;
+            updatePaceFromSpeed();
+            
+            totalDistanceMiles = 0;
+            nextMile = 1;
+            nextHalfMile = 0.5;
+            nextKm = 1;
+            nextHalfKm = 0.5;
             spawned5k = false; spawned10k = false;
+
             runStartTime = clock.getElapsedTime();
             timeOffset = 0;
             
@@ -518,6 +530,7 @@
         function resetRun() {
             isRunning = false;
             timeOffset = 0;
+            totalDistanceMiles = 0;
             timerElement.textContent = "00:00:00";
             camera.position.y = baseCameraY;
             populateInitialScenery();
@@ -527,25 +540,35 @@
             resetButton.disabled = true;
         }
         
-        function updateSpeedFromPace() {
-            const paceSeconds = parseInt(paceSelector.value);
-            MILE_INTERVAL_MS = paceSeconds * 1000;
-            const minPace = 240; const maxPace = 1800; 
-            const minSpeed = 0.03; const maxSpeed = 0.15; 
-            const paceRatio = (paceSeconds - minPace) / (maxPace - minPace);
-            lineSpeed = maxSpeed - (paceRatio * (maxSpeed - minSpeed));
+        function updatePaceFromSpeed() {
+            speedMph = parseFloat(speedSelector.value);
+            const paceTotalSeconds = 3600 / speedMph;
+            PACE_S_PER_MILE = paceTotalSeconds;
+            const paceMinutes = Math.floor(paceTotalSeconds / 60);
+            const paceSeconds = Math.round(paceTotalSeconds % 60);
+            paceDisplay.textContent = `Pace: ${paceMinutes.toString().padStart(2, '0')}:${paceSeconds.toString().padStart(2, '0')}/mile`;
+            
+            const minSpeedMph = 1.0; const maxSpeedMph = 12.0;
+            const minWorldSpeed = 1.0; const maxWorldSpeed = 12.0;
+            const speedRatio = (speedMph - minSpeedMph) / (maxSpeedMph - minSpeedMph);
+            worldSpeed = minWorldSpeed + (speedRatio * (maxWorldSpeed - minWorldSpeed));
         }
 
         function animate() {
             animationFrameId = requestAnimationFrame(animate);
+            const delta = clock.getDelta();
             const time = clock.getElapsedTime();
             
             skyShaderMaterial.uniforms.iTime.value = time;
             grassShaderMaterial.uniforms.iTime.value = time;
             
             if (isRunning) {
+                const distanceToMove = worldSpeed * delta;
                 const elapsedTime = time - runStartTime - timeOffset;
                 
+                const milesPerSecond = speedMph / 3600;
+                totalDistanceMiles += milesPerSecond * delta;
+
                 const headBounce = Math.sin(elapsedTime * 8) * 0.05;
                 camera.position.y = baseCameraY + headBounce;
 
@@ -553,9 +576,9 @@
                 timerElement.textContent = `${Math.floor(totalSeconds / 3600).toString().padStart(2, '0')}:${Math.floor((totalSeconds % 3600) / 60).toString().padStart(2, '0')}:${(totalSeconds % 60).toString().padStart(2, '0')}`;
                 
                 const allScenery = [...signs, ...buildings, ...people, ...finishLines, ...startingLines];
-                allScenery.forEach(obj => obj.position.z += lineSpeed);
+                allScenery.forEach(obj => obj.position.z += distanceToMove);
                 baseLines.forEach(line => {
-                    line.position.z += lineSpeed;
+                    line.position.z += distanceToMove;
                     if(line.position.z > camera.position.z + 5) {
                         line.position.z -= baseLines.length * 10;
                     }
@@ -573,15 +596,14 @@
                     });
                 });
                 
-                buildings.forEach((obj, index) => {
+                buildings.forEach((obj) => {
                     if (obj.position.z > camera.position.z + 10) {
-                        const side = obj.position.x < 0;
-                        obj.position.z = farZ - (25 + Math.random() * 15);
+                        obj.position.z = scenerySpawnZ - (25 + Math.random() * 15);
                     }
                 });
-                people.forEach((obj, index) => {
+                people.forEach((obj) => {
                     if (obj.position.z > camera.position.z + 10) {
-                       obj.position.z = farZ - (3 + Math.random() * 4);
+                       obj.position.z = scenerySpawnZ - (3 + Math.random() * 4);
                     }
                 });
                 [...signs, ...finishLines, ...startingLines].forEach((obj) => {
@@ -590,32 +612,33 @@
                     }
                 });
                 
-                const totalMilesElapsed = elapsedTime / (MILE_INTERVAL_MS / 1000);
-                const totalKmElapsed = totalMilesElapsed * MILE_TO_KM;
-                
-                if (miles < Math.floor(totalMilesElapsed)) {
-                    miles = Math.floor(totalMilesElapsed);
-                    if (miles > 0) createRoadSign(`MILE ${miles}`, 'right');
+                if (totalDistanceMiles >= nextMile) {
+                    createRoadSign(`MILE ${nextMile}`, 'right');
+                    nextMile++;
                 }
-                if (halfMiles < Math.floor(totalMilesElapsed * 2)) {
-                    halfMiles = Math.floor(totalMilesElapsed * 2);
-                    if(halfMiles > 0 && halfMiles % 2 !== 0) createRoadSign(`${halfMiles / 2} MILES`, 'right');
+                if (totalDistanceMiles >= nextHalfMile) {
+                    createRoadSign(`${nextHalfMile} MILES`, 'right');
+                    nextHalfMile += 1.0;
                 }
-                 if (kilometers < Math.floor(totalKmElapsed)) {
-                    kilometers = Math.floor(totalKmElapsed);
-                    if (kilometers > 0) createRoadSign(`KM ${kilometers}`, 'left');
+                const totalKmElapsed = totalDistanceMiles * MILE_TO_KM;
+                if (totalKmElapsed >= nextKm) {
+                    createRoadSign(`KM ${nextKm}`, 'left');
+                    nextKm++;
                 }
-
-                if (totalMilesElapsed >= KM_5_IN_MILES && !spawned5k) {
+                 if (totalKmElapsed >= nextHalfKm) {
+                    createRoadSign(`${nextHalfKm} KM`, 'left');
+                    nextHalfKm += 1.0;
+                }
+                if (totalDistanceMiles >= KM_5_IN_MILES && !spawned5k) {
                     const line = createFinishLine('5K FINISH');
-                    line.position.set(0,0,farZ);
+                    line.position.set(0,0, -20);
                     scene.add(line);
                     finishLines.push(line);
                     spawned5k = true;
                 }
-                if (totalMilesElapsed >= KM_10_IN_MILES && !spawned10k) {
+                if (totalDistanceMiles >= KM_10_IN_MILES && !spawned10k) {
                     const line = createFinishLine('10K FINISH');
-                    line.position.set(0,0,farZ);
+                    line.position.set(0,0, -20);
                     scene.add(line);
                     finishLines.push(line);
                     spawned10k = true;
@@ -635,7 +658,7 @@
             startButton.addEventListener('click', startRun);
             pauseButton.addEventListener('click', togglePause);
             resetButton.addEventListener('click', resetRun);
-            paceSelector.addEventListener('change', updateSpeedFromPace);
+            speedSelector.addEventListener('change', updatePaceFromSpeed);
         }
 
         window.onload = init;
